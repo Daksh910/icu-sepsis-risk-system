@@ -1,50 +1,109 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+import os
 import joblib
 import numpy as np
+from fastapi import FastAPI
+from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="ICU Sepsis Risk API")
+# ---------------------------------------------------
+# 1️⃣ App Initialization
+# ---------------------------------------------------
 
-model = joblib.load("saved_models/triage_model.pkl")
-scaler = joblib.load("saved_models/scaler.pkl")
-threshold = joblib.load("saved_models/threshold.pkl")
+app = FastAPI(
+    title="ICU Sepsis Risk Prediction API",
+    description="Predicts early sepsis risk using ICU patient data",
+    version="1.0.0"
+)
 
-class PatientInput(BaseModel):
-    HR_mean: float
-    O2Sat_min: float
-    Temp_max: float
-    MAP_min: float
-    Resp_mean: float
-    Lactate_mean: float
-    WBC_mean: float
+# ---------------------------------------------------
+# 2️⃣ CORS Middleware (Allows Frontend Connection)
+# ---------------------------------------------------
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Later replace with your frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------------------------------------------------
+# 3️⃣ Load Model Artifacts Safely
+# ---------------------------------------------------
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+model = joblib.load(os.path.join(BASE_DIR, "saved_models", "triage_model.pkl"))
+scaler = joblib.load(os.path.join(BASE_DIR, "saved_models", "scaler.pkl"))
+threshold = joblib.load(os.path.join(BASE_DIR, "saved_models", "threshold.pkl"))
+
+# ---------------------------------------------------
+# 4️⃣ Input Schema
+# ---------------------------------------------------
+
+class PatientData(BaseModel):
     Age: float
-    Gender: float
+    HR: float
+    O2Sat: float
+    Temp: float
+    SBP: float
+    MAP: float
+    DBP: float
+    Resp: float
+    Lactate: float
+    WBC: float
+
+# ---------------------------------------------------
+# 5️⃣ Root Endpoint
+# ---------------------------------------------------
 
 @app.get("/")
-def health():
-    return {"status": "running"}
+def root():
+    return {
+        "project": "ICU Sepsis Risk Prediction API",
+        "status": "running",
+        "docs": "/docs"
+    }
+
+# ---------------------------------------------------
+# 6️⃣ Health Check Endpoint
+# ---------------------------------------------------
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+
+# ---------------------------------------------------
+# 7️⃣ Prediction Endpoint
+# ---------------------------------------------------
 
 @app.post("/predict")
-def predict(data: PatientInput):
+def predict(data: PatientData):
 
-    input_data = np.array([[
-        data.HR_mean,
-        data.O2Sat_min,
-        data.Temp_max,
-        data.MAP_min,
-        data.Resp_mean,
-        data.Lactate_mean,
-        data.WBC_mean,
+    input_array = np.array([[
         data.Age,
-        data.Gender
+        data.HR,
+        data.O2Sat,
+        data.Temp,
+        data.SBP,
+        data.MAP,
+        data.DBP,
+        data.Resp,
+        data.Lactate,
+        data.WBC
     ]])
 
-    scaled = scaler.transform(input_data)
-    proba = model.predict_proba(scaled)[0][1]
+    input_scaled = scaler.transform(input_array)
 
-    risk = "High" if proba > threshold else "Low"
+    probability = model.predict_proba(input_scaled)[0][1]
+    prediction = int(probability > threshold)
 
     return {
-        "probability": round(float(proba), 4),
-        "risk_level": risk
+        "sepsis_probability": round(float(probability), 4),
+        "prediction": prediction,
+        "risk_level": (
+            "High Risk" if probability > 0.7 else
+            "Medium Risk" if probability > 0.4 else
+            "Low Risk"
+        )
     }
